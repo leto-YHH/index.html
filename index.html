@@ -183,6 +183,38 @@
     z-index:100;
   }
   .catalog-fab:hover{background:var(--primary-light);}
+
+  /* 商品查詢：全頁內嵌覆蓋層（取代 window.open，相容 LINE 內建瀏覽器） */
+  .catalog-overlay{
+    position:fixed;inset:0;z-index:1000;
+    background:var(--primary-bg);
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+  }
+  .catalog-overlay-inner{max-width:900px;margin:0 auto;padding:16px;}
+  .catalog-header{
+    display:flex;align-items:center;justify-content:space-between;
+    margin-bottom:14px;gap:10px;
+  }
+  .catalog-header h2{font-size:18px;margin:0;color:var(--text);}
+  .catalog-close-btn{
+    border:none;background:var(--primary);color:#fff;border-radius:8px;
+    padding:9px 16px;font-size:14px;font-weight:600;cursor:pointer;flex-shrink:0;
+  }
+  .catalog-close-btn:hover{background:var(--primary-light);}
+  .catalog-search{
+    width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;
+    font-size:14px;background:#fdfcf7;color:var(--text);margin-bottom:12px;box-sizing:border-box;
+  }
+  .catalog-search:focus{outline:none;border-color:var(--primary-light);}
+  .catalog-table{width:100%;border-collapse:collapse;font-size:13px;background:#fdfcf7;}
+  .catalog-table th,.catalog-table td{
+    border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;
+  }
+  .catalog-table th{background:#f0efe6;font-weight:600;white-space:nowrap;}
+  .catalog-empty{color:var(--muted);font-size:13px;padding:14px 4px;}
+  .catalog-note{font-size:12px;color:var(--muted);margin-top:4px;}
+
   /* 才計價配件 */
   .field select{
     width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:8px;
@@ -342,6 +374,17 @@
 </div>
 
 <button type="button" class="catalog-fab" id="btn-catalog">商品<br>查詢</button>
+
+<div class="catalog-overlay" id="catalog-overlay" style="display:none;">
+  <div class="catalog-overlay-inner">
+    <div class="catalog-header">
+      <h2>商品查詢</h2>
+      <button type="button" class="catalog-close-btn" id="btn-catalog-close">關閉 ✕</button>
+    </div>
+    <div class="tabbar" id="catalog-tabbar"></div>
+    <div id="catalog-tab-panels-container"></div>
+  </div>
+</div>
 
 <script>
 /* ============ 常數 ============ */
@@ -941,103 +984,76 @@ function fallbackCopy(text, cb){
   document.body.removeChild(ta);
 }
 
-/* ============ 商品查詢：開新視窗，分頁式顯示布／紗與各才計價分類 ============ */
-document.getElementById('btn-catalog').addEventListener('click', () => {
-  const win = window.open('', '_blank');
-  if (!win){ alert('瀏覽器擋住了新視窗，請允許彈出視窗後再試一次'); return; }
+/* ============ 商品查詢：頁內覆蓋層，分頁式顯示布／紗與各才計價分類 ============ */
+/* 改用同頁覆蓋層（而非 window.open 新視窗），避免 LINE 內建瀏覽器擋掉彈出視窗導致按鈕沒反應 */
+let catalogBuilt = false;
+
+function catalogBindSearch(inputId, tblId, emptyId){
+  const q = document.getElementById(inputId);
+  const emptyMsg = document.getElementById(emptyId);
+  q.addEventListener('input', () => {
+    const v = q.value.trim().toLowerCase();
+    const rowsEl = Array.from(document.querySelectorAll('#'+tblId+' tbody tr'));
+    let visible = 0;
+    rowsEl.forEach(tr => {
+      const match = tr.textContent.toLowerCase().includes(v);
+      tr.style.display = match ? '' : 'none';
+      if (match) visible++;
+    });
+    emptyMsg.style.display = visible === 0 ? 'block' : 'none';
+  });
+}
+
+function catalogSwitchTab(tabKey){
+  document.querySelectorAll('#catalog-tabbar .tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.catalogTab === tabKey));
+  document.querySelectorAll('#catalog-tab-panels-container .tab-panel').forEach(p => p.classList.toggle('active', p.id === 'catalog-tab-panel-'+tabKey));
+}
+
+function buildCatalog(){
+  if (catalogBuilt) return;
+  catalogBuilt = true;
+
+  const tabbarEl = document.getElementById('catalog-tabbar');
+  const panelsRoot = document.getElementById('catalog-tab-panels-container');
+
+  /* 布／紗分頁 */
+  const fabricSheerBtn = document.createElement('button');
+  fabricSheerBtn.type = 'button';
+  fabricSheerBtn.className = 'tab-btn active';
+  fabricSheerBtn.dataset.catalogTab = 'fabricSheer';
+  fabricSheerBtn.textContent = '布／紗';
+  fabricSheerBtn.addEventListener('click', () => catalogSwitchTab('fabricSheer'));
+  tabbarEl.appendChild(fabricSheerBtn);
 
   const rows = [
     ...PRODUCTS.fabric.map(p => ({ type: '布', ...p })),
     ...PRODUCTS.sheer.map(p => ({ type: '紗', ...p })),
   ];
   const rowsHtml = rows.map(r =>
-    `<tr><td>${escapeHtml(r.type)}</td><td>${escapeHtml(r.name)}</td><td>${r.width}呎</td><td>NT$ ${r.price}</td></tr>`
+    '<tr><td>'+escapeHtml(r.type)+'</td><td>'+escapeHtml(r.name)+'</td><td>'+r.width+'呎</td><td>NT$ '+r.price+'</td></tr>'
   ).join('');
 
-  const caiDataJson = JSON.stringify(CAI_CATEGORIES);
+  const fsPanel = document.createElement('div');
+  fsPanel.className = 'tab-panel active';
+  fsPanel.id = 'catalog-tab-panel-fabricSheer';
+  fsPanel.innerHTML =
+    '<input class="catalog-search" id="catalog-q-fabricSheer" type="text" placeholder="輸入型號搜尋（布／紗皆可）…">' +
+    '<table class="catalog-table" id="catalog-tbl-fabricSheer">' +
+      '<thead><tr><th>類型</th><th>型號</th><th>規格</th><th>單價／碼</th></tr></thead>' +
+      '<tbody>'+rowsHtml+'</tbody>' +
+    '</table>' +
+    '<div class="catalog-empty" id="catalog-empty-fabricSheer" style="display:none;">找不到符合的產品</div>';
+  panelsRoot.appendChild(fsPanel);
+  catalogBindSearch('catalog-q-fabricSheer', 'catalog-tbl-fabricSheer', 'catalog-empty-fabricSheer');
 
-  const page = `<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>涵界製所｜商品查詢</title>
-<style>
-  body{font-family:"PingFang TC","Microsoft JhengHei","Noto Sans TC",-apple-system,BlinkMacSystemFont,sans-serif;
-    margin:0;padding:20px 16px 40px;background:#eceeee;color:#2b2712;}
-  h1{font-size:20px;color:#625708;margin:0 0 16px;}
-  .tabbar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;}
-  .tab-btn{padding:8px 14px;border:1px solid #dcdedd;border-radius:20px;background:#fff;
-    color:#7c7f7e;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;}
-  .tab-btn.active{background:#625708;color:#fff;border-color:#625708;}
-  .tab-panel{display:none;}
-  .tab-panel.active{display:block;}
-  input.q{width:100%;max-width:420px;padding:10px 12px;font-size:14px;border:1px solid #dcdedd;
-    border-radius:8px;margin-bottom:16px;box-sizing:border-box;background:#fdfcf7;}
-  input.q:focus{outline:none;border-color:#8a7b1c;}
-  table{width:100%;max-width:900px;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;
-    box-shadow:0 1px 4px rgba(0,0,0,0.08);}
-  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid #eee;font-size:13px;}
-  th{background:#f4f3ee;color:#7c7f7e;font-weight:600;font-size:12px;}
-  tr:last-child td{border-bottom:none;}
-  .empty-msg{padding:16px 0;color:#7c7f7e;font-size:13px;display:none;}
-</style>
-</head>
-<body>
-  <h1>涵界製所｜商品查詢</h1>
-  <div class="tabbar" id="tabbar">
-    <button type="button" class="tab-btn active" data-tab="fabricSheer">布／紗</button>
-  </div>
-
-  <div class="tab-panel active" id="tab-panel-fabricSheer">
-    <input class="q" id="q-fabricSheer" type="text" placeholder="輸入型號搜尋（布／紗皆可）…" autofocus>
-    <table id="tbl-fabricSheer">
-      <thead><tr><th>類型</th><th>型號</th><th>規格</th><th>單價／碼</th></tr></thead>
-      <tbody>${rowsHtml}</tbody>
-    </table>
-    <div class="empty-msg" id="empty-fabricSheer">找不到符合的產品</div>
-  </div>
-
-  <div id="cai-catalog-panels"></div>
-
-<script>
-  function escapeHtml(s){
-    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  }
-  function bindSearch(inputId, tblId, emptyId){
-    const q = document.getElementById(inputId);
-    const emptyMsg = document.getElementById(emptyId);
-    q.addEventListener('input', () => {
-      const v = q.value.trim().toLowerCase();
-      const rowsEl = Array.from(document.querySelectorAll('#'+tblId+' tbody tr'));
-      let visible = 0;
-      rowsEl.forEach(tr => {
-        const match = tr.textContent.toLowerCase().includes(v);
-        tr.style.display = match ? '' : 'none';
-        if (match) visible++;
-      });
-      emptyMsg.style.display = visible === 0 ? 'block' : 'none';
-    });
-  }
-  bindSearch('q-fabricSheer', 'tbl-fabricSheer', 'empty-fabricSheer');
-
-  const CAI_CATEGORIES = ${caiDataJson};
-  const panelsRoot = document.getElementById('cai-catalog-panels');
-  const tabbarEl = document.getElementById('tabbar');
-
-  function switchTab(tabKey){
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tabKey));
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-panel-'+tabKey));
-  }
-  tabbarEl.querySelector('[data-tab="fabricSheer"]').addEventListener('click', () => switchTab('fabricSheer'));
-
+  /* 各才計價分類分頁 */
   CAI_CATEGORIES.forEach(cat => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'tab-btn';
-    btn.dataset.tab = cat.key;
+    btn.dataset.catalogTab = cat.key;
     btn.textContent = cat.label;
-    btn.addEventListener('click', () => switchTab(cat.key));
+    btn.addEventListener('click', () => catalogSwitchTab(cat.key));
     tabbarEl.appendChild(btn);
 
     const rowsHtmlCai = cat.products.map(p => {
@@ -1059,24 +1075,27 @@ document.getElementById('btn-catalog').addEventListener('click', () => {
 
     const panel = document.createElement('div');
     panel.className = 'tab-panel';
-    panel.id = 'tab-panel-'+cat.key;
+    panel.id = 'catalog-tab-panel-'+cat.key;
     panel.innerHTML =
-      '<input class="q" id="q-'+cat.key+'" type="text" placeholder="輸入型號搜尋…">' +
-      '<table id="tbl-'+cat.key+'">' +
+      '<input class="catalog-search" id="catalog-q-'+cat.key+'" type="text" placeholder="輸入型號搜尋…">' +
+      '<table class="catalog-table" id="catalog-tbl-'+cat.key+'">' +
         '<thead><tr><th>型號</th><th>做法／單價(元/才)</th><th>加購</th><th>基本才</th><th>基本高</th><th>最大寬</th><th>最大高</th><th>備註</th></tr></thead>' +
         '<tbody>'+rowsHtmlCai+'</tbody>' +
       '</table>' +
-      '<div class="empty-msg" id="empty-'+cat.key+'">找不到符合的產品</div>';
+      '<div class="catalog-empty" id="catalog-empty-'+cat.key+'" style="display:none;">找不到符合的產品</div>';
     panelsRoot.appendChild(panel);
-    bindSearch('q-'+cat.key, 'tbl-'+cat.key, 'empty-'+cat.key);
+    catalogBindSearch('catalog-q-'+cat.key, 'catalog-tbl-'+cat.key, 'catalog-empty-'+cat.key);
   });
-<\/script>
-</body>
-</html>`;
+}
 
-  win.document.open();
-  win.document.write(page);
-  win.document.close();
+document.getElementById('btn-catalog').addEventListener('click', () => {
+  buildCatalog();
+  document.getElementById('catalog-overlay').style.display = 'block';
+  document.body.style.overflow = 'hidden';
+});
+document.getElementById('btn-catalog-close').addEventListener('click', () => {
+  document.getElementById('catalog-overlay').style.display = 'none';
+  document.body.style.overflow = '';
 });
 
 calcAll();
